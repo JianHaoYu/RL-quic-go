@@ -225,7 +225,13 @@ type session struct {
 	tracer logging.ConnectionTracer
 	logger utils.Logger
 	//SCEncoder
-	SCEncoder *SCEncoder.SCEncoder
+	SCEncoderenable  bool
+	SCEncoder        *SCEncoder.SCEncoder
+	checkfirstPacket int
+	// LargestLostPacketID protocol.PacketNumber
+	// LostPacketsum       int
+	// LastSendQUICID      protocol.PacketNumber
+	// SkipPacketsum       int
 }
 
 var (
@@ -265,6 +271,7 @@ var newSession = func(
 		tracer:                tracer,
 		logger:                logger,
 		version:               v,
+		SCEncoderenable:       true,
 		SCEncoder:             SCEncoder.Initialize_encoder(8, int(protocol.MaxPacketBufferSize)+8, 0.2, 0),
 	}
 	if origDestConnID != nil {
@@ -398,6 +405,7 @@ var newClientSession = func(
 		tracer:                tracer,
 		versionNegotiated:     hasNegotiatedVersion,
 		version:               v,
+		SCEncoderenable:       false,
 		SCEncoder:             SCEncoder.Initialize_encoder(8, int(protocol.MaxPacketBufferSize)+8, 0.2, 0),
 	}
 	s.connIDManager = newConnIDManager(
@@ -1195,7 +1203,6 @@ func (s *session) handleUnpackedPacket(
 			frames = append(frames, frame)
 		}
 	}
-
 	if s.tracer != nil {
 		fs := make([]logging.Frame, len(frames))
 		for i, frame := range frames {
@@ -1208,9 +1215,10 @@ func (s *session) handleUnpackedPacket(
 			}
 		}
 	}
-	// if packet.encryptionLevel == protocol.Encryption1RTT {
-	// 	fmt.Printf("[ThoughtPut] GetPacketNumber: %d ,AtTime: %f forConnect %s \n", packet.packetNumber, float64(time.Now().UnixNano()/1e3)/1e6, s.logID)
-	// }
+	if packet.encryptionLevel == protocol.Encryption1RTT && s.checkfirstPacket == 0 {
+		s.checkfirstPacket = 1
+		fmt.Printf("[G]GetPacketNumber: %d ,AtTime: %f \n", packet.packetNumber, float64(time.Now().UnixNano()/1e3)/1e6)
+	}
 	return s.receivedPacketHandler.ReceivedPacket(packet.packetNumber, ecn, packet.encryptionLevel, rcvTime, isAckEliciting)
 }
 
@@ -1412,8 +1420,16 @@ func (s *session) handleAckFrame(frame *wire.AckFrame, encLevel protocol.Encrypt
 	if s.perspective == protocol.PerspectiveClient && !s.handshakeConfirmed {
 		s.handleHandshakeConfirmed()
 	}
-	minRTT := s.sentPacketHandler.GetMinRtt()
-	s.SCEncoder.Flush_AckedPackets(int(frame.LargestAcked()), minRTT)
+	if s.SCEncoderenable {
+		lostrate := s.sentPacketHandler.GetLostRate()
+		if lostrate >= 0 {
+			s.SCEncoder.UpdataF(lostrate)
+		}
+		minRTT := s.sentPacketHandler.GetMinRtt()
+		SmoothedRtt := s.sentPacketHandler.GetSmoothedRtt()
+		LatestRtt := s.sentPacketHandler.GetLatestRtt()
+		s.SCEncoder.Flush_AckedPackets(frame, minRTT, SmoothedRtt, LatestRtt)
+	}
 	return s.cryptoStreamHandler.SetLargest1RTTAcked(frame.LargestAcked())
 }
 
@@ -1804,12 +1820,10 @@ func (s *session) sendPackedPacket(packet *packedPacket, now time.Time) {
 		s.firstAckElicitingPacketAfterIdleSentTime = now
 	}
 	s.logPacket(packet)
+	fmt.Printf("sendPackedPacket: %d \n", packet.buffer.Len())
 	s.sentPacketHandler.SentPacket(packet.ToAckHandlerPacket(now, s.retransmissionQueue))
 	s.connIDManager.SentPacket()
-	// if packet.EncryptionLevel() == protocol.Encryption1RTT || packet.EncryptionLevel() == protocol.Encryption0RTT {
-	// 	fmt.Printf("[Server] SendPacketNumber: %d ,Length: %d ,AtTime: %f ,forConnection %s , %s \n", packet.header.PacketNumber, packet.buffer.Len(), float64(time.Now().UnixNano()/1e3)/1e6, s.logID, packet.EncryptionLevel())
-	// }
-	if packet.EncryptionLevel() == protocol.Encryption1RTT || packet.EncryptionLevel() == protocol.Encryption0RTT {
+	if (packet.EncryptionLevel() == protocol.Encryption1RTT || packet.EncryptionLevel() == protocol.Encryption0RTT) && s.SCEncoderenable {
 		QUICID := packet.header.PacketNumber
 		pktdata := make([]byte, len(packet.buffer.Data))
 		copy(pktdata, packet.buffer.Data)
@@ -1832,11 +1846,9 @@ func (s *session) sendPackedPacket(packet *packedPacket, now time.Time) {
 				break
 			}
 		}
-
 	} else {
 		s.sendQueue.Send(packet.buffer)
 	}
-
 }
 
 func (s *session) sendConnectionClose(e error) ([]byte, error) {

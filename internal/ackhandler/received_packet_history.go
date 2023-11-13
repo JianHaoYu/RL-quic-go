@@ -1,6 +1,8 @@
 package ackhandler
 
 import (
+	"fmt"
+
 	"github.com/lucas-clemente/quic-go/internal/protocol"
 	"github.com/lucas-clemente/quic-go/internal/utils"
 	"github.com/lucas-clemente/quic-go/internal/wire"
@@ -75,6 +77,7 @@ func (h *receivedPacketHistory) addToRanges(p protocol.PacketNumber) bool /* is 
 // This is a DoS defense against a peer that sends us too many gaps.
 func (h *receivedPacketHistory) maybeDeleteOldRanges() {
 	for h.ranges.Len() > protocol.MaxNumAckRanges {
+		fmt.Println("maybeDeleteOldRanges")
 		h.ranges.Remove(h.ranges.Front())
 	}
 }

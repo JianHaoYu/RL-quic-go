@@ -242,6 +242,7 @@ func (s *sendStream) popNewOrRetransmittedStreamFrame(maxBytes protocol.ByteCoun
 
 	sendWindow := s.flowController.SendWindowSize()
 	if sendWindow == 0 {
+		fmt.Println("sendwindow == 0")
 		if isBlocked, offset := s.flowController.IsNewlyBlocked(); isBlocked {
 			s.sender.queueControlFrame(&wire.StreamDataBlockedFrame{
 				StreamID:          s.streamID,
@@ -371,22 +372,25 @@ func (s *sendStream) isNewlyCompleted() bool {
 	return false
 }
 
-func (s *sendStream) queueRetransmission(f wire.Frame) {
-	sf := f.(*wire.StreamFrame)
-	sf.DataLenPresent = true
-	s.mutex.Lock()
-	if s.canceledWrite {
-		s.mutex.Unlock()
-		return
-	}
-	s.retransmissionQueue = append(s.retransmissionQueue, sf)
-	s.numOutstandingFrames--
-	if s.numOutstandingFrames < 0 {
-		panic("numOutStandingFrames negative")
-	}
-	s.mutex.Unlock()
+// func (s *sendStream) queueRetransmission(f wire.Frame) {
+// 	sf := f.(*wire.StreamFrame)
+// 	sf.DataLenPresent = true
+// 	s.mutex.Lock()
+// 	if s.canceledWrite {
+// 		s.mutex.Unlock()
+// 		return
+// 	}
+// 	s.retransmissionQueue = append(s.retransmissionQueue, sf)
+// 	s.numOutstandingFrames--
+// 	if s.numOutstandingFrames < 0 {
+// 		panic("numOutStandingFrames negative")
+// 	}
+// 	s.mutex.Unlock()
 
-	s.sender.onHasStreamData(s.streamID)
+// 	s.sender.onHasStreamData(s.streamID)
+// }
+
+func (s *sendStream) queueRetransmission(_ wire.Frame) {
 }
 
 func (s *sendStream) Close() error {

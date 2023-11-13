@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"math/big"
@@ -18,11 +19,15 @@ import (
 
 // const addr = "127.0.0.1:6868"
 
-const addr = "10.0.0.1:6868"
-const testdata = "test_25000.txt"
+const addr = "10.0.0.1:6869"
+const testdatafile = "test_25000.txt"
 
 func main() {
-	listener, err := quic.ListenAddr(addr, generateTLSConfig(), nil)
+	ip := flag.String("ip", addr, "IP:Port Address")
+	testdata := flag.String("testdata", testdatafile, "dataforsend")
+	flag.Parse()
+
+	listener, err := quic.ListenAddr(*ip, generateTLSConfig(), nil)
 	if err != nil {
 		panic(err)
 	}
@@ -35,7 +40,7 @@ func main() {
 		panic(err)
 	}
 	time.Sleep(2 * time.Second)
-	fd := openfile(testdata)
+	fd := openfile(*testdata)
 	PacketNumber := 0
 	for {
 		packet := fd[:1400]

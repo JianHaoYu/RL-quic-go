@@ -89,7 +89,11 @@ type packetHandlerMap struct {
 
 	//SCdecoder
 	// DecodedPacketQueue *DecodedPacketQueue
-	SCDecoder *SCDecoder
+	SCDecoder       *SCDecoder
+	ActiveStartTime float64
+	ACtiveEndTime   float64
+	LostPacket      []int
+	LastGetPacketID int
 	//SCdecoder
 }
 
@@ -158,6 +162,8 @@ func newPacketHandlerMap(
 		//SCdecoder
 		// DecodedPacketQueue: newDecodedPacketQueue(),
 		SCDecoder: Initialize_decoder(8, int(protocol.MaxPacketBufferSize)+8, 0.2, 0),
+		// LostPacket:      make([]int,0),
+		LastGetPacketID: -1,
 		//SCdecoder
 	}
 	go m.listen()
@@ -494,13 +500,10 @@ func (h *packetHandlerMap) maybeSendStatelessReset(p *receivedPacket, connID pro
 
 //sc
 
-func (d *SCDecoder) PacketRecv(pktbytes []byte) int {
+func (d *SCDecoder) PacketRecv(pktbytes []byte) (int, int) {
 	// fmt.Printf("lenpktbytes %d ,cap %d \n", len(pktbytes), cap(pktbytes))
 	pktstr := C.CBytes(pktbytes)
-	// fmt.Println("check4")
 	receivepacket := C.deserialize_packet(d.dec, (*C.uchar)(pktstr))
-	// d.printInfo()
-	// fmt.Println("check over")
 	defer C.free(pktstr)
 
 	// fmt.Println("--------------PKT--------------")
@@ -511,39 +514,79 @@ func (d *SCDecoder) PacketRecv(pktbytes []byte) int {
 	// d.printInfo()
 	_ = C.receive_packet(d.dec, receivepacket)
 	sourceID := int(receivepacket.sourceid)
-	// fmt.Println("check6")
-	return sourceID
+	repairID := int(receivepacket.repairid)
+	return sourceID, repairID
 }
 
 func (h *packetHandlerMap) Deserialize_Packet(p *receivedPacket) int {
-	// old_state := int(h.SCDecoder.dec.active)
+	old_state := int(h.SCDecoder.dec.active)
 	h.SCDecoder.receivedPacket = p
 	pktbytes := make([]byte, len(p.data))
 	copy(pktbytes, p.data)
-	sourceid := h.SCDecoder.PacketRecv(pktbytes)
-	// _ = h.SCDecoder.PacketRecv(pktbytes)
+	sourceid, repaireid := h.SCDecoder.PacketRecv(pktbytes)
+	now := float64(time.Now().UnixNano()) / 1e9
+	DW := int(h.SCDecoder.dec.win_e) - int(h.SCDecoder.dec.win_s)
 	if sourceid != -1 {
-		h.SCDecoder.totalSourcePacketnum = h.SCDecoder.totalSourcePacketnum + 1
-		h.SCDecoder.LossRate(sourceid + 1)
+		fmt.Printf("GETSourcePacket: %d \n", sourceid)
 	}
+	fmt.Printf("[DW]: %d ,[WIN_S]: %d ,[SourceID]: %d ,[Time]: %f \n", DW, int(h.SCDecoder.dec.win_s), sourceid, now)
 	inorder := int(h.SCDecoder.dec.inorder)
+	// fmt.Printf("DWInorder: %d ,[SourceID]: %d ,[Time]: %f \n", inorder, sourceid, now)
+
+	if sourceid != -1 {
+		h.SCDecoder.LastGetSourceID = sourceid
+		h.SCDecoder.totalSourcePacketnum = h.SCDecoder.totalSourcePacketnum + 1
+		if h.LastGetPacketID+1 != sourceid {
+			for h.LastGetPacketID+1 < sourceid {
+				h.LastGetPacketID = h.LastGetPacketID + 1
+				h.LostPacket = append(h.LostPacket, h.LastGetPacketID)
+				fmt.Printf("LOST: %d Time: %f \n", h.LastGetPacketID, now)
+			}
+		}
+		h.LastGetPacketID = sourceid
+	} else {
+		h.SCDecoder.LastGetRepairID = repaireid
+		h.SCDecoder.totalRepairPacketnum = h.SCDecoder.totalRepairPacketnum + 1
+	}
+	h.SCDecoder.LossRate()
+
 	new_state := int(h.SCDecoder.dec.active)
 	// fmt.Printf("GET sourceID %d,old_state %d, new_state %d inorder %d\n", sourceid, old_state, new_state, inorder)
-	if new_state == 0 {
-		lastPushSourceID := h.SCDecoder.lastPushSourceID
-		width := inorder - lastPushSourceID + 1
-		for i := 1; i <= width-1; i++ {
-			// for i := width - 1; i > 0; i-- {
-			SourceID := lastPushSourceID + i
+	if old_state == 1 && new_state == 0 {
+		// lastPushSourceID := h.SCDecoder.lastPushSourceID
+		// width := inorder - lastPushSourceID + 1
+		// for i := 1; i <= width-1; i++ {
+		for i := 0; i < len(h.LostPacket); i++ {
+			// SourceID := lastPushSourceID + i
+			SourceID := h.LostPacket[i]
 			cpkt := h.SCDecoder.recovered_packet(SourceID)
 			recoverdereceivedPacket := h.SCDecoder.receivedPacket.Clone()
 			recoverdereceivedPacket.buffer = getPacketBuffer()
 			recoverdereceivedPacket.data = cpkt
 			recoverdereceivedPacket.buffer.Data = recoverdereceivedPacket.data
-			// fmt.Println("PUSH source ", SourceID)
+			fmt.Println("DW PUSH source ", SourceID)
 			h.handlePacket(recoverdereceivedPacket)
-			h.SCDecoder.lastPushSourceID = SourceID
+			// h.SCDecoder.lastPushSourceID = SourceID
 		}
+		h.LostPacket = h.LostPacket[0:0]
+	}
+	if sourceid != -1 {
+		recoverdereceivedPacket := h.SCDecoder.receivedPacket.Clone()
+		recoverdereceivedPacket.buffer = getPacketBuffer()
+		header := pktbytes[16:24]
+		length := BytesToInt(header)
+		pktbytes = pktbytes[24 : length+24]
+		recoverdereceivedPacket.data = pktbytes
+		recoverdereceivedPacket.buffer.Data = recoverdereceivedPacket.data
+		fmt.Println("DW PUSH source ", sourceid)
+		h.handlePacket(recoverdereceivedPacket)
+	}
+	if old_state == 0 && new_state == 1 {
+		h.ActiveStartTime = now
+	}
+	if old_state == 1 && new_state == 0 {
+		h.ACtiveEndTime = now - h.ActiveStartTime
+		fmt.Printf("Activecontinuedfor %f \n", h.ACtiveEndTime)
 	}
 
 	return inorder
@@ -554,6 +597,9 @@ type SCDecoder struct {
 	receivedPacket       *receivedPacket
 	lastPushSourceID     int
 	totalSourcePacketnum int
+	totalRepairPacketnum int
+	LastGetSourceID      int
+	LastGetRepairID      int
 
 	sync.Mutex
 }
@@ -565,15 +611,20 @@ func Initialize_decoder(gfpower int, pktsize int, repfreq float64, seed int) *SC
 		dec:                  Dec,
 		lastPushSourceID:     -1,
 		totalSourcePacketnum: 0,
+		totalRepairPacketnum: 0,
+		LastGetSourceID:      -1,
+		LastGetRepairID:      -1,
 	}
 	d.printInfo()
 	return d
 }
 
-func (d *SCDecoder) LossRate(sourceid int) {
-	LostNum := float64(sourceid - d.totalSourcePacketnum)
-	LostRate := LostNum / float64(sourceid)
-	fmt.Printf("[TrueLossRate]: %f \n", LostRate)
+func (d *SCDecoder) LossRate() {
+	totalPacketID := d.LastGetRepairID + d.LastGetSourceID + 2
+	LostNum := float64(totalPacketID - d.totalSourcePacketnum - d.totalRepairPacketnum)
+	LostRate := LostNum / float64(totalPacketID)
+	now := float64(time.Now().UnixNano()) / 1e9
+	fmt.Printf("[TrueLossRate]: %f Time: %f \n", LostRate, now)
 }
 
 func (d *SCDecoder) recovered_packet(sourceid int) []byte {

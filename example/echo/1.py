@@ -16,10 +16,15 @@ class MyTopo( Topo ):
         "Create custom topo."
         Host1 = self.addHost( 'h1')
         Host2 = self.addHost( 'h2')
+        Switch1 = self.addSwitch('s1')
+        self.addLink( Host1, Switch1, bw=500, delay='25ms')
+        Switch2 = self.addSwitch('s2')
+        self.addLink( Host2, Switch2, bw=500, delay='25ms')
         # Add links
         # bottleneck link
         # 20Mbps, 100ms delay, 1% packet loss
-        self.addLink( Host1, Host2, bw=25, delay='300ms', loss=0)
+        # self.addLink( Switch1, Switch2, bw=25, delay='250ms', loss=0.1)
+        self.addLink( Switch1, Switch2, bw=25, delay='250ms', loss=1)
 
 
 def perfTest(num=2):
@@ -37,26 +42,14 @@ def perfTest(num=2):
     info( "Dumping host connections\n" )
     dumpNodeConnections(net.hosts)
     dumpNodeConnections(net.switches)
-    # h = net.get('h1')
-    # h.cmd('cd /home/mininet/go/src/github.com/lucas-clemente/quic-go-scunder/example/echo/server/; export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:./; ifconfig h1-eth0 mtu 1800; go run server.go -ip "10.0.0.1:6868" >s_SC_1.log &')
-    # h = net.get('h1')
-    # h.cmd('cd /home/mininet/go/src/github.com/lucas-clemente/quic-go-scunder/example/echo/server/; export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:./; ifconfig h1-eth0 mtu 1800; go run server.go -ip "10.0.0.1:6869" >s_SC_2.log &')
-    # h = net.get('h1')
-    # h.cmd('cd /home/mininet/go/src/github.com/lucas-clemente/quic-go-scunder/example/echo/server/; export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:./; ifconfig h1-eth0 mtu 1800; go run server.go -ip "10.0.0.1:6871" >s_SC_3.log &')
-    # h = net.get('h2')
-    # h.cmd('cd /home/mininet/go/src/github.com/lucas-clemente/quic-go-scunder/example/echo/client/; export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:./; ifconfig h2-eth0 mtu 1800; go run client.go -ip "10.0.0.1:6868" >c_SC_1.log &')
-    # h = net.get('h2')
-    # h.cmd('cd /home/mininet/go/src/github.com/lucas-clemente/quic-go-scunder/example/echo/client/; export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:./; ifconfig h2-eth0 mtu 1800; go run client.go -ip "10.0.0.1:6869" >c_SC_2.log &')
-    # h = net.get('h2')
-    # h.cmd('cd /home/mininet/go/src/github.com/lucas-clemente/quic-go-scunder/example/echo/client/; export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:./; ifconfig h2-eth0 mtu 1800; go run client.go -ip "10.0.0.1:6871" >c_SC_3.log &')
 
+    for i in range(0,2):
+        h = net.get('h1')
+        h.cmd('cd /home/mininet/go/src/github.com/lucas-clemente/quic-go-scunder/example/echo/server/; export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:./; go run server.go -ip=10.0.0.1:6868  -testdata=test_25000.txt  >s_SCQUIC_Satellite_25000_'+str(i)+'.log &')
+        h = net.get('h2')
+        h.cmd('cd /home/mininet/go/src/github.com/lucas-clemente/quic-go-scunder/example/echo/client/; export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:./; go run client.go -ip=10.0.0.1:6868 >c_SCQUIC_Satellite_25000_'+str(i)+'.log ')
 
-    # h = net.get('h1')
-    # h.cmd('cd /home/mininet/go/src/github.com/lucas-clemente/quic-go-scunder/example/echo/test_for_TCP_2022_9_24/server/; ifconfig h1-eth0 mtu 1800; go run server.go -ip=10.0.0.1:6870 >s_TCP.log &')
-    # h = net.get('h2')
-    # h.cmd('cd /home/mininet/go/src/github.com/lucas-clemente/quic-go-scunder/example/echo/test_for_TCP_2022_9_24/client/; ifconfig h2-eth0 mtu 1800; go run client.go -ip=10.0.0.1:6870 >c_TCP.log ')    
-
-    CLI(net)
+    # CLI(net)
     net.stop()
 
 if __name__ == '__main__':

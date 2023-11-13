@@ -171,9 +171,9 @@ func (s *receiveStream) readImpl(p []byte) (bool /*stream completed */, int, err
 		bytesRead += m
 
 		// when a RESET_STREAM was received, the was already informed about the final byteOffset for this stream
-		if !s.resetRemotely {
-			s.flowController.AddBytesRead(protocol.ByteCount(m))
-		}
+		// if !s.resetRemotely {
+		// 	s.flowController.AddBytesRead(protocol.ByteCount(m))
+		// }
 
 		if s.readPosInFrame >= len(s.currentFrame) && s.currentFrameIsLast {
 			s.finRead = true
@@ -233,6 +233,9 @@ func (s *receiveStream) handleStreamFrame(frame *wire.StreamFrame) error {
 }
 
 func (s *receiveStream) handleStreamFrameImpl(frame *wire.StreamFrame) (bool /* completed */, error) {
+	if !s.resetRemotely {
+		s.flowController.AddBytesRead(frame.DataLen())
+	}
 	maxOffset := frame.Offset + frame.DataLen()
 	if err := s.flowController.UpdateHighestReceived(maxOffset, frame.Fin); err != nil {
 		return false, err

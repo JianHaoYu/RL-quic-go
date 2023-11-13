@@ -82,6 +82,9 @@ func (h *receivedPacketTracker) IgnoreBelow(p protocol.PacketNumber) {
 	if p <= h.ignoreBelow {
 		return
 	}
+	if h.packetHistory.ranges.Len() > 1 {
+		return
+	}
 	h.ignoreBelow = p
 	h.packetHistory.DeleteBelow(p)
 	if h.logger.Debug() {

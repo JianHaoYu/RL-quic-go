@@ -17,6 +17,7 @@ const (
 	renoBeta                   = 0.7 // Reno backoff factor.
 	minCongestionWindowPackets = 2
 	initialCongestionWindow    = 32
+	// initialCongestionWindow = 800
 )
 
 type cubicSender struct {
@@ -139,7 +140,7 @@ func (c *cubicSender) OnPacketSent(
 	bytes protocol.ByteCount,
 	isRetransmittable bool,
 ) {
-	fmt.Printf("[CWND] packetNumber: %d ,CWND: %d InPacketIs: %d ,AtTime: %f \n", packetNumber, c.GetCongestionWindow(), c.GetCongestionWindow()/c.maxDatagramSize, float64(time.Now().UnixNano()/1e3)/1e6)
+	fmt.Printf("[CWND] packetNumberLost: %d ,CWND: %d InPacketIs: %d ,AtTime: %f ,SmoothRtt: %d ,LastRTT: %d \n", packetNumber, c.GetCongestionWindow(), c.GetCongestionWindow()/maxDatagramSize, float64(time.Now().UnixNano()/1e3)/1e6, c.rttStats.SmoothedRTT(), c.rttStats.LatestRTT())
 	c.pacer.SentPacket(sentTime, bytes)
 	if !isRetransmittable {
 		return
@@ -211,6 +212,7 @@ func (c *cubicSender) OnPacketLost(packetNumber protocol.PacketNumber, lostBytes
 	// reset packet count from congestion avoidance mode. We start
 	// counting again when we're out of recovery.
 	c.numAckedPackets = 0
+	fmt.Printf("[CWND] packetNumberLost: %d ,CWND: %d InPacketIs: %d ,AtTime: %f ,SmoothRtt: %d ,LastRTT: %d \n", packetNumber, c.GetCongestionWindow(), c.GetCongestionWindow()/maxDatagramSize, float64(time.Now().UnixNano()/1e3)/1e6, c.rttStats.SmoothedRTT(), c.rttStats.LatestRTT())
 }
 
 // Called when we receive an ack. Normal TCP tracks how many packets one ack
@@ -221,6 +223,7 @@ func (c *cubicSender) maybeIncreaseCwnd(
 	priorInFlight protocol.ByteCount,
 	eventTime time.Time,
 ) {
+	// fmt.Printf("[CWND] ,CWND: %d InPacketIs: %d ,AtTime: %f \n", c.GetCongestionWindow(), c.GetCongestionWindow()/c.maxDatagramSize, float64(time.Now().UnixNano()/1e3)/1e6)
 	// Do not increase the congestion window unless the sender is close to using
 	// the current window.
 	if !c.isCwndLimited(priorInFlight) {

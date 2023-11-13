@@ -94,6 +94,13 @@ type sentPacketHandler struct {
 
 	tracer logging.ConnectionTracer
 	logger utils.Logger
+
+	//LostRate estimate
+	LargestLostNumber      protocol.PacketNumber
+	LostNumberSum          int
+	LargestSkipPacktnumber protocol.PacketNumber
+	SkipPacktsum           int
+	LostRate               float64
 }
 
 var (
@@ -116,6 +123,20 @@ func newSentPacketHandler(
 		true, // use Reno
 		tracer,
 	)
+	// congestion := congestion.NewWestWoodSender(
+	// 	congestion.DefaultClock{},
+	// 	rttStats,
+	// 	initialMaxDatagramSize,
+	// 	true, // use Reno
+	// 	tracer,
+	// )
+	// congestion := congestion.NewsarsaSender(
+	// 	congestion.DefaultClock{},
+	// 	rttStats,
+	// 	initialMaxDatagramSize,
+	// 	true, // use Reno
+	// 	tracer,
+	// )
 
 	return &sentPacketHandler{
 		peerCompletedAddressValidation: pers == protocol.PerspectiveServer,
@@ -131,7 +152,10 @@ func newSentPacketHandler(
 	}
 }
 
-func (h *sentPacketHandler) GetMinRtt() time.Duration { return h.rttStats.MinRTT() }
+func (h *sentPacketHandler) GetMinRtt() time.Duration      { return h.rttStats.MinRTT() }
+func (h *sentPacketHandler) GetLatestRtt() time.Duration   { return h.rttStats.LatestRTT() }
+func (h *sentPacketHandler) GetSmoothedRtt() time.Duration { return h.rttStats.SmoothedRTT() }
+func (h *sentPacketHandler) GetLostRate() float64          { return h.LostRate }
 
 func (h *sentPacketHandler) DropPackets(encLevel protocol.EncryptionLevel) {
 	if h.perspective == protocol.PerspectiveClient && encLevel == protocol.EncryptionInitial {
@@ -325,15 +349,18 @@ func (h *sentPacketHandler) ReceivedAck(ack *wire.AckFrame, encLevel protocol.En
 		return false, err
 	}
 	var acked1RTTPacket bool
+	var SumACKedPacketLength protocol.ByteCount
 	for _, p := range ackedPackets {
 		if p.includedInBytesInFlight && !p.declaredLost {
 			h.congestion.OnPacketAcked(p.PacketNumber, p.Length, priorInFlight, rcvTime)
+			SumACKedPacketLength = SumACKedPacketLength + p.Length
 		}
 		if p.EncryptionLevel == protocol.Encryption1RTT {
 			acked1RTTPacket = true
 		}
 		h.removeFromBytesInFlight(p)
 	}
+	h.congestion.OnPacketAcked(-1, SumACKedPacketLength, -1, rcvTime)
 
 	// Reset the pto_count unless the client is unsure if the server has validated the client's address.
 	if h.peerCompletedAddressValidation {
@@ -350,6 +377,11 @@ func (h *sentPacketHandler) ReceivedAck(ack *wire.AckFrame, encLevel protocol.En
 
 	pnSpace.history.DeleteOldPackets(rcvTime)
 	h.setLossDetectionTimer()
+
+	LargestAckedForLossEstimate := pnSpace.largestAcked - protocol.PacketNumber(h.SkipPacktsum)
+	h.LostRate = float64(h.LostNumberSum) / float64(LargestAckedForLossEstimate)
+	fmt.Printf("LostRate: %f ,Time: %f \n", h.LostRate, float64(time.Now().UnixNano()/1e3)/1e6)
+
 	return acked1RTTPacket, nil
 }
 
@@ -570,8 +602,17 @@ func (h *sentPacketHandler) detectLostPackets(now time.Time, encLevel protocol.E
 		if p.PacketNumber > pnSpace.largestAcked {
 			return false, nil
 		}
+		if p.skippedPacket && h.LargestSkipPacktnumber < p.PacketNumber {
+			h.LargestSkipPacktnumber = p.PacketNumber
+			h.SkipPacktsum = h.SkipPacktsum + 1
+		}
 		if p.declaredLost || p.skippedPacket {
 			return true, nil
+		}
+
+		if h.LargestLostNumber < p.PacketNumber {
+			h.LargestLostNumber = p.PacketNumber
+			h.LostNumberSum = h.LostNumberSum + 1
 		}
 
 		var packetLost bool

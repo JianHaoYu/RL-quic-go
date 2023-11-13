@@ -52,6 +52,9 @@ type SentPacketHandler interface {
 	OnLossDetectionTimeout() error
 	//SCencoder
 	GetMinRtt() time.Duration
+	GetLatestRtt() time.Duration
+	GetSmoothedRtt() time.Duration
+	GetLostRate() float64
 	//SCencoder
 }
 
